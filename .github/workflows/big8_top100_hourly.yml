@@ -2,23 +2,32 @@ name: iTunes Top 100 (Big 8) — Jimin — Hourly
 
 on:
   schedule:
-    - cron: "5 * * * *"
+    - cron: "5 * * * *"  # beda 5 menit dari top1 biar makin aman
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: big8-top100-hourly
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - run: npm ci
+      - name: Install
+        run: npm ci
 
       - name: Run scan (Top 100 Big 8)
         env:
@@ -33,8 +42,23 @@ jobs:
 
       - name: Commit state (storage_big8_top100.json)
         run: |
+          set -e
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add storage_big8_top100.json
-          git diff --cached --quiet || git commit -m "update big8 top100 state"
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "update big8 top100 state"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main || true
+            if git push; then
+              echo "Pushed successfully."
+              exit 0
+            fi
+            echo "Push failed, retrying in 5s... ($i/5)"
+            sleep 5
+          done
+          echo "Push failed after retries."
+          exit 1
