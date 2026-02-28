@@ -1,0 +1,40 @@
+name: iTunes Top #1 (ALL Countries) — Jimin — Hourly
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm ci
+
+      - name: Run scan (Top #1 ALL)
+        env:
+          STORAGE_FILE: storage_top1_all.json
+          COUNTRIES: ae,ag,ai,al,am,ao,ar,at,au,az,ba,bb,be,bf,bg,bh,bj,bm,bn,bo,br,bs,bt,bw,by,bz,ca,cd,cg,ch,ci,cl,cm,cn,co,cr,cv,cy,cz,de,dk,dm,do,dz,ec,ee,eg,es,fi,fj,fr,ga,gb,gd,ge,gh,gm,gr,gt,gw,hk,hn,hr,hu,id,ie,il,in,is,it,jm,jo,jp,ke,kg,kh,kn,kr,kw,ky,kz,la,lb,lc,lk,lr,lt,lu,lv,ma,md,me,mg,mk,ml,mn,mo,mr,ms,mt,mu,mv,mw,mx,my,mz,na,ne,ng,ni,nl,no,np,nz,om,pa,pe,pg,ph,pk,pl,pt,py,qa,ro,rs,ru,rw,sa,sb,sc,se,sg,si,sk,sl,sn,sr,st,sv,sz,tc,td,th,tj,tm,tn,tr,tt,tw,tz,ua,ug,us,uy,uz,vc,ve,vg,vn,ye,za,zm,zw
+          TARGET: JIMIN
+          TOP_LIMIT: 1
+          THROTTLE_MS: 150
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT: ${{ secrets.TELEGRAM_CHAT }}
+        run: node action_run.js scan
+
+      - name: Commit state (storage_top1_all.json)
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add storage_top1_all.json
+          git diff --cached --quiet || git commit -m "update top1 all state"
+          git push
