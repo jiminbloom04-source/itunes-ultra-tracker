@@ -112,12 +112,6 @@ function normName(s) {
 function entryLabel(topLimit) {
   return topLimit === 1 ? "#1" : `TOP ${topLimit}`;
 }
-function newPrefix(topLimit) {
-  return topLimit === 1 ? "🏆 NEW #1" : "🚨 NEW";
-}
-function reentryPrefix(topLimit) {
-  return topLimit === 1 ? "🔁 BACK TO #1" : "🔄 RE-ENTRY";
-}
 
 async function fetchChart(country, type, target) {
   const url = `https://rss.marketingtools.apple.com/api/v2/${country}/music/most-played/100/${type}.json`;
@@ -136,7 +130,16 @@ async function fetchChart(country, type, target) {
     .filter((x) => isArtistAllowed(x.artist, target));
 }
 
-async function runScan() {
+/**
+ * Helper: collect lines per country for a single combined message.
+ */
+function pushLine(bucketByCountry, country, line) {
+  const cc = country.toUpperCase();
+  if (!bucketByCountry[cc]) bucketByCountry[cc] = [];
+  bucketByCountry[cc].push(line);
+}
+
+async function runScanCombinedMessage() {
   const store = loadStorage();
   const items = store.items;
 
@@ -148,6 +151,10 @@ async function runScan() {
   const touched = new Set();
   const label = entryLabel(topLimit);
 
+  // ✅ all events collected here
+  const bucket = {}; // { "US": ["...","..."], "JP": [...] }
+  let totalEvents = 0;
+
   for (const country of countries) {
     if (throttle > 0) await sleep(throttle);
 
@@ -157,7 +164,7 @@ async function runScan() {
       songs = await fetchChart(country, "songs", target);
       albums = await fetchChart(country, "albums", target);
     } catch {
-      continue; // skip storefront if unavailable
+      continue; // skip storefront errors
     }
 
     const all = [...songs, ...albums];
@@ -171,9 +178,45 @@ async function runScan() {
       touched.add(key);
 
       if (!old) {
-        await sendTelegram(
-          `${newPrefix(topLimit)} ${typeLabel} (${label}) (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`
-        );
+        // NEW
+        if (topLimit === 1) {
+          pushLine(
+            bucket,
+            country,
+            `🏆 NEW #1 ${typeLabel}: ${entry.name} (#1)`
+          );
+          pushLine(
+            bucket,
+            country,
+            `🏆 FIRST TIME #1 ${typeLabel}: ${entry.name} (#1)`
+          );
+          totalEvents += 2;
+        } else {
+          pushLine(
+            bucket,
+            country,
+            `🚨 NEW ${typeLabel} (${label}): ${entry.name} (#${entry.rank})`
+          );
+          totalEvents += 1;
+
+          // optional thresholds
+          if (entry.rank <= 50) {
+            pushLine(
+              bucket,
+              country,
+              `🔥 FIRST TIME TOP 50 ${typeLabel}: ${entry.name} (#${entry.rank})`
+            );
+            totalEvents += 1;
+          }
+          if (entry.rank <= 10) {
+            pushLine(
+              bucket,
+              country,
+              `🚀 FIRST TIME TOP 10 ${typeLabel}: ${entry.name} (#${entry.rank})`
+            );
+            totalEvents += 1;
+          }
+        }
 
         items[key] = {
           rank: entry.rank,
@@ -181,55 +224,62 @@ async function runScan() {
           top50Alerted: entry.rank <= 50,
           top10Alerted: entry.rank <= 10,
         };
-
-        // Threshold alerts only if TOP_LIMIT > 1
-        if (topLimit > 1) {
-          if (entry.rank <= 50) {
-            await sendTelegram(
-              `🔥 FIRST TIME TOP 50 ${typeLabel} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`
-            );
-          }
-          if (entry.rank <= 10) {
-            await sendTelegram(
-              `🚀 FIRST TIME TOP 10 ${typeLabel} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`
-            );
-          }
-        } else {
-          await sendTelegram(
-            `🏆 FIRST TIME #1 ${typeLabel} (${country.toUpperCase()}): ${entry.name} (#1)`
-          );
-        }
       } else {
+        // RE-ENTRY
         if (old.onChart === false) {
-          await sendTelegram(
-            `${reentryPrefix(topLimit)} ${typeLabel} (${label}) (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`
-          );
+          if (topLimit === 1) {
+            pushLine(
+              bucket,
+              country,
+              `🔁 BACK TO #1 ${typeLabel}: ${entry.name} (#1)`
+            );
+          } else {
+            pushLine(
+              bucket,
+              country,
+              `🔄 RE-ENTRY ${typeLabel} (${label}): ${entry.name} (#${entry.rank})`
+            );
+          }
+          totalEvents += 1;
         }
 
-        // Movement only useful if TOP_LIMIT > 1
+        // MOVEMENT (only if TOP_LIMIT > 1)
         if (topLimit > 1) {
           const diff = old.rank - entry.rank;
           if (diff > 0) {
-            await sendTelegram(
-              `📈 ${country.toUpperCase()} ${entry.name} naik ${diff} (#${entry.rank})`
+            pushLine(
+              bucket,
+              country,
+              `📈 ${entry.name} naik ${diff} (#${entry.rank})`
             );
+            totalEvents += 1;
           } else if (diff < 0) {
-            await sendTelegram(
-              `📉 ${country.toUpperCase()} ${entry.name} turun ${Math.abs(diff)} (#${entry.rank})`
+            pushLine(
+              bucket,
+              country,
+              `📉 ${entry.name} turun ${Math.abs(diff)} (#${entry.rank})`
             );
+            totalEvents += 1;
           }
 
+          // thresholds if not alerted before
           if (entry.rank <= 50 && !old.top50Alerted) {
-            await sendTelegram(
-              `🔥 FIRST TIME TOP 50 ${typeLabel} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`
+            pushLine(
+              bucket,
+              country,
+              `🔥 FIRST TIME TOP 50 ${typeLabel}: ${entry.name} (#${entry.rank})`
             );
             old.top50Alerted = true;
+            totalEvents += 1;
           }
           if (entry.rank <= 10 && !old.top10Alerted) {
-            await sendTelegram(
-              `🚀 FIRST TIME TOP 10 ${typeLabel} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`
+            pushLine(
+              bucket,
+              country,
+              `🚀 FIRST TIME TOP 10 ${typeLabel}: ${entry.name} (#${entry.rank})`
             );
             old.top10Alerted = true;
+            totalEvents += 1;
           }
         }
 
@@ -239,13 +289,30 @@ async function runScan() {
     }
   }
 
-  // mark off-chart if missing in this run (out of TOP_LIMIT)
+  // mark off-chart if missing in this run
   for (const [key, val] of Object.entries(items)) {
     if (!touched.has(key)) val.onChart = false;
   }
 
   store.items = items;
   saveStorage(store);
+
+  // ✅ Send ONE combined message per scan (only if there are events)
+  if (totalEvents > 0) {
+    const now = new Date();
+    const stamp = now.toISOString().replace("T", " ").slice(0, 16) + " UTC";
+
+    let msg = `🧾 iTunes Update (SCAN)\nTARGET=${target} | ${label}\n${stamp}\n`;
+
+    // sort countries for stable output
+    const countriesSorted = Object.keys(bucket).sort();
+    for (const cc of countriesSorted) {
+      msg += `\n🇺🇳 ${cc}\n`;
+      for (const line of bucket[cc]) msg += `• ${line}\n`;
+    }
+
+    await sendTelegram(msg.trimEnd());
+  }
 }
 
 async function runDailySummary() {
@@ -273,7 +340,7 @@ async function runDailySummary() {
   const dateStr = new Date().toLocaleDateString();
   const label = entryLabel(topLimit);
 
-  // per-country summaries (active only)
+  // per-country summary (still per country, daily)
   for (const country of activeCountries) {
     const list = currentByCountry[country]
       .slice()
@@ -294,7 +361,7 @@ async function runDailySummary() {
     await sendTelegram(msg.trimEnd());
   }
 
-  // global aggregation (active countries only)
+  // global aggregation (active only)
   const agg = new Map();
   for (const country of activeCountries) {
     for (const it of currentByCountry[country]) {
@@ -357,4 +424,4 @@ async function runDailySummary() {
 
 const mode = (process.argv[2] || "scan").toLowerCase();
 if (mode === "summary") await runDailySummary();
-else await runScan();
+else await runScanCombinedMessage();
