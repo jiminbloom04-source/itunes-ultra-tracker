@@ -1,4 +1,4 @@
-name: iTunes Top #1 (ALL Storefronts Official) — Jimin — Hourly
+name: iTunes Top #1 (ALL Countries) — Jimin — Hourly
 
 on:
   schedule:
@@ -9,41 +9,25 @@ permissions:
   contents: write
 
 concurrency:
-  group: top1-all-hourly
+  group: top1-all
   cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - run: npm ci
-
-      # ✅ GET OFFICIAL STORELIST FROM APPLE
-      - name: Build ALL storefront list (Official Apple)
-        run: |
-          node -e "
-          const axios = require('axios');
-          (async () => {
-            try {
-              const res = await axios.get('https://rss.marketingtools.apple.com/api/v2/storefronts.json');
-              const codes = (res.data?.storefronts || [])
-                .map(s => s.id.toLowerCase())
-                .sort();
-              console.log('COUNTRIES=' + codes.join(','));
-            } catch (e) {
-              console.error('Failed to fetch storefront list');
-              process.exit(1);
-            }
-          })();
-          " >> $GITHUB_ENV
+      - name: Install
+        run: npm ci
 
       - name: Run scan (Top #1 ALL)
         env:
@@ -53,15 +37,33 @@ jobs:
           THROTTLE_MS: 120
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT: ${{ secrets.TELEGRAM_CHAT }}
+
+          # ✅ ALL iTunes storefront codes
+          COUNTRIES: ae,ag,ai,al,am,ao,ar,at,au,az,ba,bb,bd,be,bf,bg,bh,bj,bm,bn,bo,br,bs,bw,by,bz,ca,ch,cl,cn,co,cr,cv,cy,cz,de,dk,dm,do,dz,ec,ee,eg,es,fi,fj,fr,gb,gd,gh,gm,gr,gt,gw,gy,hk,hn,hr,hu,id,ie,il,in,is,it,jm,jo,jp,ke,kg,kh,kn,kr,kw,ky,kz,la,lb,lc,lk,lr,lt,lu,lv,md,me,mk,ml,mn,mo,mt,mu,mw,mx,my,mz,na,ne,ng,ni,nl,no,np,nz,om,pa,pe,pg,ph,pk,pl,pt,py,qa,ro,rs,ru,rw,sa,sc,se,sg,si,sk,sl,sn,sv,sz,tc,td,th,tn,tr,tt,tw,tz,ua,ug,us,uy,uz,vc,ve,vn,ye,za,zm,zw
+
         run: node action_run.js scan
 
-      - name: Commit state
+      - name: Commit state (storage_top1_all.json)
         run: |
           set -e
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add storage_top1_all.json
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m "update top1 all state"
-          git pull --rebase origin main || true
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "update top1 all state" || true
+
+          # retry push (anti conflict)
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main || true
+            if git push; then
+              echo "Pushed successfully."
+              exit 0
+            fi
+            echo "Push failed, retrying in 5s... ($i/5)"
+            sleep 5
+          done
+          echo "Push failed after retries."
+          exit 1
