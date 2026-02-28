@@ -113,6 +113,20 @@ function entryLabel(topLimit) {
   return topLimit === 1 ? "#1" : `TOP ${topLimit}`;
 }
 
+// ✅ Country code -> Flag emoji (Option A: flag + code)
+function ccToFlagEmoji(cc) {
+  cc = String(cc || "").trim().toUpperCase();
+
+  // If not ISO-3166 alpha2, fallback flag
+  if (!/^[A-Z]{2}$/.test(cc)) return "🏳️";
+
+  // Regional Indicator Symbols
+  const A = 0x1f1e6;
+  const first = cc.charCodeAt(0) - 65;
+  const second = cc.charCodeAt(1) - 65;
+  return String.fromCodePoint(A + first, A + second);
+}
+
 async function fetchChart(country, type, target) {
   const url = `https://rss.marketingtools.apple.com/api/v2/${country}/music/most-played/100/${type}.json`;
   const { data } = await axios.get(url, { timeout: 30000 });
@@ -130,11 +144,9 @@ async function fetchChart(country, type, target) {
     .filter((x) => isArtistAllowed(x.artist, target));
 }
 
-/**
- * Helper: collect lines per country for a single combined message.
- */
+/** Collect lines per country for single combined scan message */
 function pushLine(bucketByCountry, country, line) {
-  const cc = country.toUpperCase();
+  const cc = String(country || "").toUpperCase();
   if (!bucketByCountry[cc]) bucketByCountry[cc] = [];
   bucketByCountry[cc].push(line);
 }
@@ -151,8 +163,8 @@ async function runScanCombinedMessage() {
   const touched = new Set();
   const label = entryLabel(topLimit);
 
-  // ✅ all events collected here
-  const bucket = {}; // { "US": ["...","..."], "JP": [...] }
+  // Collect all events, then send ONE message
+  const bucket = {}; // { "US": ["..."], "JP": ["..."] }
   let totalEvents = 0;
 
   for (const country of countries) {
@@ -180,16 +192,9 @@ async function runScanCombinedMessage() {
       if (!old) {
         // NEW
         if (topLimit === 1) {
-          pushLine(
-            bucket,
-            country,
-            `🏆 NEW #1 ${typeLabel}: ${entry.name} (#1)`
-          );
-          pushLine(
-            bucket,
-            country,
-            `🏆 FIRST TIME #1 ${typeLabel}: ${entry.name} (#1)`
-          );
+          pushLine(bucket, country, `🏆 NEW #1 ${typeLabel}: ${entry.name} (#1)`);
+          // Optional: keep "first time #1" line
+          pushLine(bucket, country, `🏆 FIRST TIME #1 ${typeLabel}: ${entry.name} (#1)`);
           totalEvents += 2;
         } else {
           pushLine(
@@ -199,7 +204,7 @@ async function runScanCombinedMessage() {
           );
           totalEvents += 1;
 
-          // optional thresholds
+          // Optional threshold alerts
           if (entry.rank <= 50) {
             pushLine(
               bucket,
@@ -228,11 +233,7 @@ async function runScanCombinedMessage() {
         // RE-ENTRY
         if (old.onChart === false) {
           if (topLimit === 1) {
-            pushLine(
-              bucket,
-              country,
-              `🔁 BACK TO #1 ${typeLabel}: ${entry.name} (#1)`
-            );
+            pushLine(bucket, country, `🔁 BACK TO #1 ${typeLabel}: ${entry.name} (#1)`);
           } else {
             pushLine(
               bucket,
@@ -247,11 +248,7 @@ async function runScanCombinedMessage() {
         if (topLimit > 1) {
           const diff = old.rank - entry.rank;
           if (diff > 0) {
-            pushLine(
-              bucket,
-              country,
-              `📈 ${entry.name} naik ${diff} (#${entry.rank})`
-            );
+            pushLine(bucket, country, `📈 ${entry.name} naik ${diff} (#${entry.rank})`);
             totalEvents += 1;
           } else if (diff < 0) {
             pushLine(
@@ -302,12 +299,11 @@ async function runScanCombinedMessage() {
     const now = new Date();
     const stamp = now.toISOString().replace("T", " ").slice(0, 16) + " UTC";
 
-    let msg = `🧾 iTunes Update (SCAN)\nTARGET=${target} | ${label}\n${stamp}\n`;
+    let msg = `🧾 iTunes Update (Hourly)\nTARGET=${target} | ${label}\n${stamp}\n`;
 
-    // sort countries for stable output
     const countriesSorted = Object.keys(bucket).sort();
     for (const cc of countriesSorted) {
-      msg += `\n🇺🇳 ${cc}\n`;
+      msg += `\n${ccToFlagEmoji(cc)} ${cc}\n`;
       for (const line of bucket[cc]) msg += `• ${line}\n`;
     }
 
@@ -340,13 +336,15 @@ async function runDailySummary() {
   const dateStr = new Date().toLocaleDateString();
   const label = entryLabel(topLimit);
 
-  // per-country summary (still per country, daily)
+  // per-country daily summaries (still separated, daily)
   for (const country of activeCountries) {
     const list = currentByCountry[country]
       .slice()
       .sort((a, b) => a.kind.localeCompare(b.kind) || a.rank - b.rank);
 
-    let msg = `📊 iTunes Summary (TARGET=${target}, ${label}) (${country.toUpperCase()}) — ${dateStr}\n`;
+    let msg = `📊 iTunes Summary (TARGET=${target}, ${label}) (${ccToFlagEmoji(
+      country
+    )} ${country.toUpperCase()}) — ${dateStr}\n`;
 
     msg += "\n🎵 Songs:\n";
     const songs = list.filter((x) => x.kind === "songs");
@@ -414,9 +412,9 @@ async function runDailySummary() {
     const kindLabel = r.kind === "songs" ? "Song" : "Album";
     gmsg += `• ${kindLabel}: ${r.name}\n`;
     gmsg += `  - Countries: ${r.countryCount} (${Array.from(r.countries)
-      .map((c) => c.toUpperCase())
+      .map((c) => `${ccToFlagEmoji(c)} ${c.toUpperCase()}`)
       .join(", ")})\n`;
-    gmsg += `  - Best rank: #${r.bestRank} (${r.bestCountry.toUpperCase()})\n`;
+    gmsg += `  - Best rank: #${r.bestRank} (${ccToFlagEmoji(r.bestCountry)} ${r.bestCountry.toUpperCase()})\n`;
     gmsg += `  - Avg rank: #${r.avgRank.toFixed(1)}\n`;
   }
   await sendTelegram(gmsg.trimEnd());
