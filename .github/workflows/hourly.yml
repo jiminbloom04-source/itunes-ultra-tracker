@@ -26,7 +26,7 @@ jobs:
       - name: Run scan
         env:
           COUNTRIES: ALL
-          TARGET: BOTH
+          TARGET: JIMIN
           TOP_LIMIT: 50
           THROTTLE_MS: 150
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
