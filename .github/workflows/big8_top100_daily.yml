@@ -1,0 +1,32 @@
+name: iTunes Top 100 (Big 8) — Jimin — Daily Summary
+
+on:
+  schedule:
+    - cron: "10 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm ci
+
+      - name: Run summary (Top 100 Big 8)
+        env:
+          STORAGE_FILE: storage_big8_top100.json
+          COUNTRIES: us,jp,gb,de,cn,fr,kr,ca
+          TARGET: JIMIN
+          TOP_LIMIT: 100
+          THROTTLE_MS: 150
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT: ${{ secrets.TELEGRAM_CHAT }}
+        run: node action_run.js summary
