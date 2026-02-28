@@ -1,24 +1,5 @@
 {
-  "items": {
-    "ar_songs_1596532400": {
-      "rank": 35,
-      "top50Alerted": true,
-      "top10Alerted": false,
-      "onChart": true
-    },
-    "ar_albums_1596529064": {
-      "rank": 17,
-      "top50Alerted": true,
-      "top10Alerted": false,
-      "onChart": true
-    },
-    "ar_albums_1597016856": {
-      "rank": 27,
-      "top50Alerted": true,
-      "top10Alerted": false,
-      "onChart": true
-    }
-  },
+  "items": {},
   "bot": {
     "offset": 0
   },
