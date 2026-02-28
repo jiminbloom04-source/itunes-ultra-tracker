@@ -1,4 +1,4 @@
-name: iTunes Top #1 (ALL Countries) — Jimin — Daily Summary
+name: iTunes Top #1 (ALL Storefronts) — Jimin — Daily Summary
 
 on:
   schedule:
@@ -8,22 +8,47 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: top1-all-daily
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - run: npm ci
+      - name: Install
+        run: npm ci
+
+      # ✅ Build COUNTRIES automatically (all iTunes storefront country codes)
+      - name: Build ALL storefront list
+        run: |
+          node -e "
+          const https=require('https');
+          const url='https://raw.githubusercontent.com/jcoester/iTunes-country-codes/master/itunes.json';
+          https.get(url,res=>{
+            let d='';
+            res.on('data',c=>d+=c);
+            res.on('end',()=>{
+              const obj=JSON.parse(d);
+              const codes=Object.keys(obj).map(x=>x.toLowerCase()).sort();
+              console.log('COUNTRIES='+codes.join(','));
+            });
+          }).on('error',e=>{console.error(e);process.exit(1);});
+          " >> $GITHUB_ENV
 
       - name: Run summary (Top #1 ALL)
         env:
           STORAGE_FILE: storage_top1_all.json
-          COUNTRIES: ae,ag,ai,al,am,ao,ar,at,au,az,ba,bb,be,bf,bg,bh,bj,bm,bn,bo,br,bs,bt,bw,by,bz,ca,cd,cg,ch,ci,cl,cm,cn,co,cr,cv,cy,cz,de,dk,dm,do,dz,ec,ee,eg,es,fi,fj,fr,ga,gb,gd,ge,gh,gm,gr,gt,gw,hk,hn,hr,hu,id,ie,il,in,is,it,jm,jo,jp,ke,kg,kh,kn,kr,kw,ky,kz,la,lb,lc,lk,lr,lt,lu,lv,ma,md,me,mg,mk,ml,mn,mo,mr,ms,mt,mu,mv,mw,mx,my,mz,na,ne,ng,ni,nl,no,np,nz,om,pa,pe,pg,ph,pk,pl,pt,py,qa,ro,rs,ru,rw,sa,sb,sc,se,sg,si,sk,sl,sn,sr,st,sv,sz,tc,td,th,tj,tm,tn,tr,tt,tw,tz,ua,ug,us,uy,uz,vc,ve,vg,vn,ye,za,zm,zw
           TARGET: JIMIN
           TOP_LIMIT: 1
           THROTTLE_MS: 150
