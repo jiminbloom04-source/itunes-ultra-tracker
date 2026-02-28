@@ -1,35 +1,27 @@
 import axios from "axios";
 import fs from "fs";
 
-const STORAGE_FILE = "./storage.json";
-
-const ALL_COUNTRIES = [
-"ae","ag","ai","al","am","ao","ar","at","au","az","ba","bb","be","bf","bg","bh","bj","bm","bn","bo","br","bs","bt","bw","by","bz",
-"ca","cd","cg","ch","ci","cl","cm","cn","co","cr","cv","cy","cz","de","dk","dm","do","dz","ec","ee","eg","es","fi","fj","fr",
-"ga","gb","gd","ge","gh","gm","gr","gt","gw","hk","hn","hr","hu","id","ie","il","in","is","it","jm","jo","jp","ke","kg","kh","kn",
-"kr","kw","ky","kz","la","lb","lc","lk","lr","lt","lu","lv","ma","md","me","mg","mk","ml","mn","mo","mr","ms","mt","mu","mv","mw",
-"mx","my","mz","na","ne","ng","ni","nl","no","np","nz","om","pa","pe","pg","ph","pk","pl","pt","py","qa","ro","rs","ru","rw","sa",
-"sb","sc","se","sg","si","sk","sl","sn","sr","st","sv","sz","tc","td","th","tj","tm","tn","tr","tt","tw","tz","ua","ug","us","uy",
-"uz","vc","ve","vg","vn","ye","za","zm","zw"
-];
-
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 
+function getStorageFile(){
+  return String(process.env.STORAGE_FILE || "./storage.json");
+}
+
 function loadStorage(){
-  if(!fs.existsSync(STORAGE_FILE)) return { items:{}, bot:{offset:0}, config:{target:null} };
+  const file = getStorageFile();
+  if(!fs.existsSync(file)) return { items:{} };
   try{
-    const s = JSON.parse(fs.readFileSync(STORAGE_FILE,"utf8"));
+    const s = JSON.parse(fs.readFileSync(file,"utf8"));
     s.items ??= {};
-    s.bot ??= { offset: 0 };
-    s.config ??= { target: null };
     return s;
   }catch{
-    return { items:{}, bot:{offset:0}, config:{target:null} };
+    return { items:{} };
   }
 }
 
 function saveStorage(store){
-  fs.writeFileSync(STORAGE_FILE, JSON.stringify(store,null,2));
+  const file = getStorageFile();
+  fs.writeFileSync(file, JSON.stringify(store,null,2));
 }
 
 function chunkMessage(msg, maxLen=3800){
@@ -63,22 +55,23 @@ async function sendTelegram(text){
 }
 
 function getTopLimit(){
-  const n = Number(process.env.TOP_LIMIT || 50);
-  if(!Number.isFinite(n) || n <= 0) return 50;
+  const n = Number(process.env.TOP_LIMIT || 100);
+  if(!Number.isFinite(n) || n <= 0) return 100;
   return Math.min(Math.floor(n), 100);
 }
 
 function getCountries(){
-  const raw = String(process.env.COUNTRIES || "ALL").trim();
-  if(raw.toUpperCase() === "ALL") return ALL_COUNTRIES;
+  const raw = String(process.env.COUNTRIES || "").trim();
+  if(!raw) throw new Error("COUNTRIES env is required.");
   return raw.split(",").map(s=>s.trim().toLowerCase()).filter(Boolean);
 }
 
 function getTarget(){
-  const t = String(process.env.TARGET || "BOTH").toUpperCase();
-  return ["JIMIN","BTS","BOTH"].includes(t) ? t : "BOTH";
+  const t = String(process.env.TARGET || "JIMIN").toUpperCase();
+  return ["JIMIN","BTS","BOTH"].includes(t) ? t : "JIMIN";
 }
 
+// artist matching
 function matchBTS(a){
   return a.includes("bts") || a.includes("bangtan") || a.includes("방탄") || a.includes("방탄소년단");
 }
@@ -86,6 +79,7 @@ function matchJimin(a){
   return a.includes("jimin");
 }
 
+// JIMIN = solo only (exclude BTS)
 function isArtistAllowed(artist, target){
   const a = String(artist||"").toLowerCase();
   const hasJimin = matchJimin(a);
@@ -93,7 +87,7 @@ function isArtistAllowed(artist, target){
 
   if(target === "JIMIN") return hasJimin && !hasBTS;
   if(target === "BTS") return hasBTS;
-  return hasJimin || hasBTS; // BOTH
+  return hasJimin || hasBTS;
 }
 
 function normName(s){
@@ -103,6 +97,17 @@ function normName(s){
     .replace(/[^a-z0-9]+/g," ")
     .replace(/\s+/g," ")
     .trim();
+}
+
+/** labeling: TOP 1 => #1 mode */
+function entryLabel(topLimit){
+  return topLimit === 1 ? "#1" : `TOP ${topLimit}`;
+}
+function newPrefix(topLimit){
+  return topLimit === 1 ? "🏆 NEW #1" : "🚨 NEW";
+}
+function reentryPrefix(topLimit){
+  return topLimit === 1 ? "🔁 BACK TO #1" : "🔄 RE-ENTRY";
 }
 
 async function fetchChart(country, type, target){
@@ -132,6 +137,7 @@ async function runScan(){
   const throttle = Number(process.env.THROTTLE_MS || 0);
 
   const touched = new Set();
+  const label = entryLabel(topLimit);
 
   for(const country of countries){
     if(throttle>0) await sleep(throttle);
@@ -145,42 +151,50 @@ async function runScan(){
     }
 
     const all = [...songs,...albums];
-    if(!all.length) continue; // hanya negara yg ada entry TOP_LIMIT
+    if(!all.length) continue; // only active countries (that have entries within limit)
 
     for(const entry of all){
       const key = `${country}_${entry.kind}_${entry.id}`;
       const old = items[key];
-      const label = entry.kind === "songs" ? "SONG" : "ALBUM";
+      const typeLabel = entry.kind === "songs" ? "SONG" : "ALBUM";
 
       touched.add(key);
 
       if(!old){
-        await sendTelegram(`🚨 NEW ${label} (TOP ${topLimit}) (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
+        await sendTelegram(`${newPrefix(topLimit)} ${typeLabel} (${label}) (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
         items[key] = {
           rank: entry.rank,
+          onChart: true,
           top50Alerted: entry.rank <= 50,
-          top10Alerted: entry.rank <= 10,
-          onChart: true
+          top10Alerted: entry.rank <= 10
         };
 
-        if(entry.rank <= 50) await sendTelegram(`🔥 FIRST TIME TOP 50 ${label} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
-        if(entry.rank <= 10) await sendTelegram(`🚀 FIRST TIME TOP 10 ${label} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
+        // Only meaningful for TOP_LIMIT > 1
+        if(topLimit > 1){
+          if(entry.rank <= 50) await sendTelegram(`🔥 FIRST TIME TOP 50 ${typeLabel} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
+          if(entry.rank <= 10) await sendTelegram(`🚀 FIRST TIME TOP 10 ${typeLabel} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
+        } else {
+          await sendTelegram(`🏆 FIRST TIME #1 ${typeLabel} (${country.toUpperCase()}): ${entry.name} (#1)`);
+        }
       }else{
         if(old.onChart === false){
-          await sendTelegram(`🔄 RE-ENTRY ${label} (TOP ${topLimit}) (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
+          await sendTelegram(`${reentryPrefix(topLimit)} ${typeLabel} (${label}) (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
         }
 
-        const diff = old.rank - entry.rank;
-        if(diff>0) await sendTelegram(`📈 ${country.toUpperCase()} ${entry.name} naik ${diff} (#${entry.rank})`);
-        else if(diff<0) await sendTelegram(`📉 ${country.toUpperCase()} ${entry.name} turun ${Math.abs(diff)} (#${entry.rank})`);
+        // Movement only useful if TOP_LIMIT > 1 (in #1 mode it's always rank 1)
+        if(topLimit > 1){
+          const diff = old.rank - entry.rank;
+          if(diff>0) await sendTelegram(`📈 ${country.toUpperCase()} ${entry.name} naik ${diff} (#${entry.rank})`);
+          else if(diff<0) await sendTelegram(`📉 ${country.toUpperCase()} ${entry.name} turun ${Math.abs(diff)} (#${entry.rank})`);
 
-        if(entry.rank <= 50 && !old.top50Alerted){
-          await sendTelegram(`🔥 FIRST TIME TOP 50 ${label} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
-          old.top50Alerted = true;
-        }
-        if(entry.rank <= 10 && !old.top10Alerted){
-          await sendTelegram(`🚀 FIRST TIME TOP 10 ${label} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
-          old.top10Alerted = true;
+          if(entry.rank <= 50 && !old.top50Alerted){
+            await sendTelegram(`🔥 FIRST TIME TOP 50 ${typeLabel} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
+            old.top50Alerted = true;
+          }
+          if(entry.rank <= 10 && !old.top10Alerted){
+            await sendTelegram(`🚀 FIRST TIME TOP 10 ${typeLabel} (${country.toUpperCase()}): ${entry.name} (#${entry.rank})`);
+            old.top10Alerted = true;
+          }
         }
 
         old.rank = entry.rank;
@@ -189,11 +203,9 @@ async function runScan(){
     }
   }
 
-  // kalau item sebelumnya tidak ketemu di scan ini => off chart (out of TOP_LIMIT)
+  // off-chart if missing this run (out of TOP_LIMIT)
   for(const [key, val] of Object.entries(items)){
-    if(!touched.has(key)){
-      val.onChart = false;
-    }
+    if(!touched.has(key)) val.onChart = false;
   }
 
   store.items = items;
@@ -223,11 +235,11 @@ async function runDailySummary(){
   }
 
   const dateStr = new Date().toLocaleDateString();
+  const label = entryLabel(topLimit);
 
-  // summary per negara (hanya yg aktif)
   for(const country of activeCountries){
     const list = currentByCountry[country].slice().sort((a,b)=>(a.kind.localeCompare(b.kind)||a.rank-b.rank));
-    let msg = `📊 iTunes Summary (TARGET=${target}, TOP ${topLimit}) (${country.toUpperCase()}) — ${dateStr}\n`;
+    let msg = `📊 iTunes Summary (TARGET=${target}, ${label}) (${country.toUpperCase()}) — ${dateStr}\n`;
 
     msg += "\n🎵 Songs:\n";
     const songs = list.filter(x=>x.kind==="songs");
@@ -242,13 +254,21 @@ async function runDailySummary(){
     await sendTelegram(msg.trimEnd());
   }
 
-  // global ranking agregasi (hanya negara aktif)
+  // global aggregation (active countries only)
   const agg = new Map();
   for(const country of activeCountries){
     for(const it of currentByCountry[country]){
       const key = `${it.kind}::${normName(it.name)}`;
       if(!agg.has(key)){
-        agg.set(key, { name: it.name, kind: it.kind, countries:new Set([country]), bestRank:it.rank, bestCountry:country, sumRank:it.rank, count:1 });
+        agg.set(key, {
+          name: it.name,
+          kind: it.kind,
+          countries: new Set([country]),
+          bestRank: it.rank,
+          bestCountry: country,
+          sumRank: it.rank,
+          count: 1
+        });
       }else{
         const a = agg.get(key);
         a.countries.add(country);
@@ -263,7 +283,7 @@ async function runDailySummary(){
   }
 
   if(!agg.size){
-    await sendTelegram(`🌍 iTunes Global Ranking — ${dateStr}\nNo entries found for TARGET=${target} in TOP ${topLimit}.`);
+    await sendTelegram(`🌍 iTunes Global Ranking — ${dateStr}\nNo entries found for TARGET=${target} in ${label}.`);
     return;
   }
 
@@ -273,7 +293,7 @@ async function runDailySummary(){
     avgRank: r.sumRank / r.count
   })).sort((a,b)=>(b.countryCount-a.countryCount)||(a.bestRank-b.bestRank)||(a.avgRank-b.avgRank));
 
-  let gmsg = `🌍 iTunes Global Ranking (TARGET=${target}, TOP ${topLimit}) — ${dateStr}\n(active countries only)\n\n`;
+  let gmsg = `🌍 iTunes Global Ranking (TARGET=${target}, ${label}) — ${dateStr}\n(active countries only)\n\n`;
   for(const r of rows){
     const kindLabel = r.kind==="songs" ? "Song" : "Album";
     gmsg += `• ${kindLabel}: ${r.name}\n`;
