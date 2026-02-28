@@ -1,4 +1,4 @@
-name: iTunes Top #1 (ALL Storefronts) — Jimin — Daily Summary
+name: iTunes Top #1 (ALL Storefronts Official) — Jimin — Daily
 
 on:
   schedule:
@@ -16,42 +16,40 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Install
-        run: npm ci
+      - run: npm ci
 
-      # ✅ Build COUNTRIES automatically (all iTunes storefront country codes)
-      - name: Build ALL storefront list
+      - name: Build ALL storefront list (Official Apple)
         run: |
           node -e "
-          const https=require('https');
-          const url='https://raw.githubusercontent.com/jcoester/iTunes-country-codes/master/itunes.json';
-          https.get(url,res=>{
-            let d='';
-            res.on('data',c=>d+=c);
-            res.on('end',()=>{
-              const obj=JSON.parse(d);
-              const codes=Object.keys(obj).map(x=>x.toLowerCase()).sort();
-              console.log('COUNTRIES='+codes.join(','));
-            });
-          }).on('error',e=>{console.error(e);process.exit(1);});
+          const axios = require('axios');
+          (async () => {
+            try {
+              const res = await axios.get('https://rss.marketingtools.apple.com/api/v2/storefronts.json');
+              const codes = (res.data?.storefronts || [])
+                .map(s => s.id.toLowerCase())
+                .sort();
+              console.log('COUNTRIES=' + codes.join(','));
+            } catch (e) {
+              console.error('Failed to fetch storefront list');
+              process.exit(1);
+            }
+          })();
           " >> $GITHUB_ENV
 
-      - name: Run summary (Top #1 ALL)
+      - name: Run summary
         env:
           STORAGE_FILE: storage_top1_all.json
           TARGET: JIMIN
           TOP_LIMIT: 1
-          THROTTLE_MS: 150
+          THROTTLE_MS: 120
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT: ${{ secrets.TELEGRAM_CHAT }}
         run: node action_run.js summary
