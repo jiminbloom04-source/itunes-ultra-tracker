@@ -47,7 +47,6 @@ async function sendTelegram(text) {
   const token = process.env.TELEGRAM_TOKEN;
   const chat = process.env.TELEGRAM_CHAT;
   if (!token || !chat) return;
-
   for (const part of chunkMessage(text)) {
     await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
       chat_id: chat,
@@ -108,19 +107,13 @@ function normName(s) {
     .trim();
 }
 
-// Labeling for TOP 1 vs TOP N
 function entryLabel(topLimit) {
   return topLimit === 1 ? "#1" : `TOP ${topLimit}`;
 }
 
-// ✅ Country code -> Flag emoji (Option A: flag + code)
 function ccToFlagEmoji(cc) {
   cc = String(cc || "").trim().toUpperCase();
-
-  // If not ISO-3166 alpha2, fallback flag
   if (!/^[A-Z]{2}$/.test(cc)) return "🏳️";
-
-  // Regional Indicator Symbols
   const A = 0x1f1e6;
   const first = cc.charCodeAt(0) - 65;
   const second = cc.charCodeAt(1) - 65;
@@ -144,7 +137,6 @@ async function fetchChart(country, type, target) {
     .filter((x) => isArtistAllowed(x.artist, target));
 }
 
-/** Collect lines per country for single combined scan message */
 function pushLine(bucketByCountry, country, line) {
   const cc = String(country || "").toUpperCase();
   if (!bucketByCountry[cc]) bucketByCountry[cc] = [];
@@ -163,8 +155,7 @@ async function runScanCombinedMessage() {
   const touched = new Set();
   const label = entryLabel(topLimit);
 
-  // Collect all events, then send ONE message
-  const bucket = {}; // { "US": ["..."], "JP": ["..."] }
+  const bucket = {};
   let totalEvents = 0;
 
   for (const country of countries) {
@@ -176,11 +167,11 @@ async function runScanCombinedMessage() {
       songs = await fetchChart(country, "songs", target);
       albums = await fetchChart(country, "albums", target);
     } catch {
-      continue; // skip storefront errors
+      continue;
     }
 
     const all = [...songs, ...albums];
-    if (!all.length) continue; // active-only
+    if (!all.length) continue;
 
     for (const entry of all) {
       const key = `${country}_${entry.kind}_${entry.id}`;
@@ -193,32 +184,18 @@ async function runScanCombinedMessage() {
         // NEW
         if (topLimit === 1) {
           pushLine(bucket, country, `🏆 NEW #1 ${typeLabel}: ${entry.name} (#1)`);
-          // Optional: keep "first time #1" line
           pushLine(bucket, country, `🏆 FIRST TIME #1 ${typeLabel}: ${entry.name} (#1)`);
           totalEvents += 2;
         } else {
-          pushLine(
-            bucket,
-            country,
-            `🚨 NEW ${typeLabel} (${label}): ${entry.name} (#${entry.rank})`
-          );
+          pushLine(bucket, country, `🚨 NEW ${typeLabel} (${label}): ${entry.name} (#${entry.rank})`);
           totalEvents += 1;
 
-          // Optional threshold alerts
           if (entry.rank <= 50) {
-            pushLine(
-              bucket,
-              country,
-              `🔥 FIRST TIME TOP 50 ${typeLabel}: ${entry.name} (#${entry.rank})`
-            );
+            pushLine(bucket, country, `🔥 FIRST TIME TOP 50 ${typeLabel}: ${entry.name} (#${entry.rank})`);
             totalEvents += 1;
           }
           if (entry.rank <= 10) {
-            pushLine(
-              bucket,
-              country,
-              `🚀 FIRST TIME TOP 10 ${typeLabel}: ${entry.name} (#${entry.rank})`
-            );
+            pushLine(bucket, country, `🚀 FIRST TIME TOP 10 ${typeLabel}: ${entry.name} (#${entry.rank})`);
             totalEvents += 1;
           }
         }
@@ -230,51 +207,34 @@ async function runScanCombinedMessage() {
           top10Alerted: entry.rank <= 10,
         };
       } else {
-        // RE-ENTRY
+        // RE-ENTRY / BACK
         if (old.onChart === false) {
           if (topLimit === 1) {
             pushLine(bucket, country, `🔁 BACK TO #1 ${typeLabel}: ${entry.name} (#1)`);
           } else {
-            pushLine(
-              bucket,
-              country,
-              `🔄 RE-ENTRY ${typeLabel} (${label}): ${entry.name} (#${entry.rank})`
-            );
+            pushLine(bucket, country, `🔄 RE-ENTRY ${typeLabel} (${label}): ${entry.name} (#${entry.rank})`);
           }
           totalEvents += 1;
         }
 
-        // MOVEMENT (only if TOP_LIMIT > 1)
+        // MOVEMENT only if TOP_LIMIT > 1
         if (topLimit > 1) {
           const diff = old.rank - entry.rank;
           if (diff > 0) {
-            pushLine(bucket, country, `📈 ${entry.name} naik ${diff} (#${entry.rank})`);
+            pushLine(bucket, country, `📈 ${entry.name} UP ${diff} (now #${entry.rank})`);
             totalEvents += 1;
           } else if (diff < 0) {
-            pushLine(
-              bucket,
-              country,
-              `📉 ${entry.name} turun ${Math.abs(diff)} (#${entry.rank})`
-            );
+            pushLine(bucket, country, `📉 ${entry.name} DOWN ${Math.abs(diff)} (now #${entry.rank})`);
             totalEvents += 1;
           }
 
-          // thresholds if not alerted before
           if (entry.rank <= 50 && !old.top50Alerted) {
-            pushLine(
-              bucket,
-              country,
-              `🔥 FIRST TIME TOP 50 ${typeLabel}: ${entry.name} (#${entry.rank})`
-            );
+            pushLine(bucket, country, `🔥 FIRST TIME TOP 50 ${typeLabel}: ${entry.name} (#${entry.rank})`);
             old.top50Alerted = true;
             totalEvents += 1;
           }
           if (entry.rank <= 10 && !old.top10Alerted) {
-            pushLine(
-              bucket,
-              country,
-              `🚀 FIRST TIME TOP 10 ${typeLabel}: ${entry.name} (#${entry.rank})`
-            );
+            pushLine(bucket, country, `🚀 FIRST TIME TOP 10 ${typeLabel}: ${entry.name} (#${entry.rank})`);
             old.top10Alerted = true;
             totalEvents += 1;
           }
@@ -286,7 +246,7 @@ async function runScanCombinedMessage() {
     }
   }
 
-  // mark off-chart if missing in this run
+  // Mark off-chart if missing this run
   for (const [key, val] of Object.entries(items)) {
     if (!touched.has(key)) val.onChart = false;
   }
@@ -294,12 +254,13 @@ async function runScanCombinedMessage() {
   store.items = items;
   saveStorage(store);
 
-  // ✅ Send ONE combined message per scan (only if there are events)
+  // One combined message (only if events exist)
   if (totalEvents > 0) {
     const now = new Date();
     const stamp = now.toISOString().replace("T", " ").slice(0, 16) + " UTC";
 
     let msg = `🧾 iTunes Update (Hourly)\nTARGET=${target} | ${label}\n${stamp}\n`;
+    msg += `Updates detected: ${totalEvents}\n`;
 
     const countriesSorted = Object.keys(bucket).sort();
     for (const cc of countriesSorted) {
@@ -333,33 +294,31 @@ async function runDailySummary() {
     } catch {}
   }
 
-  const dateStr = new Date().toLocaleDateString();
+  const dateStr = new Date().toISOString().slice(0, 10);
   const label = entryLabel(topLimit);
 
-  // per-country daily summaries (still separated, daily)
+  // Country summary
   for (const country of activeCountries) {
     const list = currentByCountry[country]
       .slice()
       .sort((a, b) => a.kind.localeCompare(b.kind) || a.rank - b.rank);
 
-    let msg = `📊 iTunes Summary (TARGET=${target}, ${label}) (${ccToFlagEmoji(
-      country
-    )} ${country.toUpperCase()}) — ${dateStr}\n`;
+    let msg = `📊 iTunes Daily Summary\nTARGET=${target} | ${label}\n${ccToFlagEmoji(country)} ${country.toUpperCase()} | ${dateStr}\n`;
 
-    msg += "\n🎵 Songs:\n";
+    msg += `\n🎵 Songs:\n`;
     const songs = list.filter((x) => x.kind === "songs");
-    if (!songs.length) msg += "• (none)\n";
+    if (!songs.length) msg += `• (none)\n`;
     else songs.forEach((s) => (msg += `• ${s.name} (#${s.rank})\n`));
 
-    msg += "\n💿 Albums:\n";
+    msg += `\n💿 Albums:\n`;
     const albums = list.filter((x) => x.kind === "albums");
-    if (!albums.length) msg += "• (none)\n";
+    if (!albums.length) msg += `• (none)\n`;
     else albums.forEach((a) => (msg += `• ${a.name} (#${a.rank})\n`));
 
     await sendTelegram(msg.trimEnd());
   }
 
-  // global aggregation (active only)
+  // Global aggregation
   const agg = new Map();
   for (const country of activeCountries) {
     for (const it of currentByCountry[country]) {
@@ -388,9 +347,7 @@ async function runDailySummary() {
   }
 
   if (!agg.size) {
-    await sendTelegram(
-      `🌍 iTunes Global Ranking — ${dateStr}\nNo entries found for TARGET=${target} in ${label}.`
-    );
+    await sendTelegram(`🌍 Global Summary\nNo entries found for TARGET=${target} (${label}) on ${dateStr}.`);
     return;
   }
 
@@ -407,7 +364,8 @@ async function runDailySummary() {
         a.avgRank - b.avgRank
     );
 
-  let gmsg = `🌍 iTunes Global Ranking (TARGET=${target}, ${label}) — ${dateStr}\n(active countries only)\n\n`;
+  let gmsg = `🌍 iTunes Global Summary\nTARGET=${target} | ${label}\nDate: ${dateStr}\n(active countries only)\n\n`;
+
   for (const r of rows) {
     const kindLabel = r.kind === "songs" ? "Song" : "Album";
     gmsg += `• ${kindLabel}: ${r.name}\n`;
@@ -415,8 +373,9 @@ async function runDailySummary() {
       .map((c) => `${ccToFlagEmoji(c)} ${c.toUpperCase()}`)
       .join(", ")})\n`;
     gmsg += `  - Best rank: #${r.bestRank} (${ccToFlagEmoji(r.bestCountry)} ${r.bestCountry.toUpperCase()})\n`;
-    gmsg += `  - Avg rank: #${r.avgRank.toFixed(1)}\n`;
+    gmsg += `  - Avg rank: #${r.avgRank.toFixed(1)}\n\n`;
   }
+
   await sendTelegram(gmsg.trimEnd());
 }
 
